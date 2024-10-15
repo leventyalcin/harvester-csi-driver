@@ -18,6 +18,7 @@ if [[ -n "$3" ]]; then
   SCRIPT_TARGET=$3
 fi
 
+CURL_CONN_TIMEOUT=${CURL_CONN_TIMEOUT:-60}
 
 case $SCRIPT_TARGET in
   RKE1 | rke1 | RKE2 | rke2 | K3S | k3s)
@@ -49,7 +50,7 @@ create_service_account() {
 
 create_rolebinding() {
   echo -e "\\nCreating a rolebinding in ${NAMESPACE} namespace: ${ROLE_BINDING_NAME}"
-  kubectl create rolebinding ${ROLE_BINDING_NAME} --serviceaccount=${NAMESPACE}:${SERVICE_ACCOUNT_NAME} --clusterrole=${CLUSTER_ROLE_NAME} --namespace=${NAMESPACE} --dry-run -o yaml | kubectl apply -f -
+  kubectl create rolebinding "${ROLE_BINDING_NAME}" --serviceaccount="${NAMESPACE}:${SERVICE_ACCOUNT_NAME}" --clusterrole="${CLUSTER_ROLE_NAME}" --namespace="${NAMESPACE}" --dry-run -o yaml | kubectl apply -f -
 }
 
 get_secret_name_from_service_account() {
@@ -109,10 +110,10 @@ set_kube_config_values() {
   CLUSTER_NAME=$(kubectl config get-contexts "$context" | awk '{print $3}' | tail -n 1)
   echo "Cluster name: ${CLUSTER_NAME}"
 
-  ENDPOINT=$(echo "https://"$(kubectl -n harvester-system get cm vip -o jsonpath="{.data.ip}")":6443")
-  curl -k -ss $ENDPOINT 2>&1 > /dev/null
-  if [ $? -ne 0 ]; then
-        echo "ENDPOINT not reachable!"
+  ENDPOINT=$(echo -n "https://$(kubectl -n harvester-system get configmap vip -o jsonpath='{.data.ip}'):6443")
+
+  if ! curl --fail --insecure --silent --connect-timeout "$CURL_CONN_TIMEOUT" "$ENDPOINT" > /dev/null 2>&1; then
+        echo "$ENDPOINT not reachable!"
         exit 1
   fi  
   echo "Endpoint: ${ENDPOINT}"
@@ -147,7 +148,7 @@ set_kube_config_values() {
 
 assemble_addon_config() {
   echo -e -n "\\n========RKE-ADDON-CONFIGURATION-FOR-HARVESTER_CSI_DRIVER=========="
-  kubeconfig=`sed 's/^/        /g' ${KUBECFG_FILE_NAME}`
+  kubeconfig=$(sed -e 's/^/        /g' "${KUBECFG_FILE_NAME}")
   echo "
   addons: |-
     ---
@@ -168,10 +169,10 @@ $kubeconfig
 
 generate_cloud_config() {
   echo "########## cloud-config ############"
-  cat ${KUBECFG_FILE_NAME}
+  cat "${KUBECFG_FILE_NAME}"
   echo
   echo "########## cloud-init user data ############"
-  if [[ $OSTYPE == 'darwin'* ]]; then
+  if [[ "$OSTYPE" == 'darwin'* ]]; then
           KUBECONFIG_B64=$(base64 -b 0 < "${KUBECFG_FILE_NAME}")
   else
           KUBECONFIG_B64=$(base64 -w 0 < "${KUBECFG_FILE_NAME}")
